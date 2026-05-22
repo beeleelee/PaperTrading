@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/felix/papertrading/internal/app"
 	"github.com/felix/papertrading/internal/domain/core"
+	"github.com/felix/papertrading/internal/domain/market"
 	"github.com/felix/papertrading/internal/domain/order"
 	"github.com/felix/papertrading/internal/domain/portfolio"
 	"github.com/felix/papertrading/internal/domain/risk"
@@ -21,12 +23,12 @@ import (
 
 func main() {
 	csvPath := flag.String("csv", "test/data/aapl_5min.csv", "path to CSV market data")
-	symbol := flag.String("symbol", "AAPL", "default symbol for CSV without symbol column")
+	symbol := flag.String("symbol", "AAPL", "symbol or comma-separated symbols")
 	cash := flag.String("cash", "100000.00", "initial cash")
 	strategyName := flag.String("strategy", "ma_cross", "strategy: ma_cross or price_cross")
 	fastPeriod := flag.Int("fast", 10, "fast MA period")
 	slowPeriod := flag.Int("slow", 30, "slow MA period")
-	qty := flag.Int("qty", 100, "trade quantity")
+	qty := flag.Int("qty", 100, "trade quantity per position")
 	threshold := flag.Float64("threshold", 0.0, "price threshold for price_cross strategy")
 	maxPosPct := flag.Float64("max-pos-pct", 0, "max position size as %% of portfolio (0 = unlimited)")
 	maxDrawdown := flag.Float64("max-drawdown", 0, "max drawdown %% before stopping (0 = unlimited)")
@@ -39,21 +41,42 @@ func main() {
 		log.Fatalf("invalid cash: %v", err)
 	}
 
-	f := feed.NewCSVFeed(*csvPath, feed.WithSkipRows(1), feed.WithSymbol(core.Symbol(*symbol)))
+	symbols := strings.Split(*symbol, ",")
+	csvPaths := strings.Split(*csvPath, ",")
+	if len(symbols) != len(csvPaths) {
+		log.Fatalf("number of symbols (%d) must match number of CSV paths (%d)", len(symbols), len(csvPaths))
+	}
 
+	var feeds []market.Feed
+	var strats []strategy.Strategy
+	for i, sym := range symbols {
+		sym = strings.TrimSpace(sym)
+		f := feed.NewCSVFeed(strings.TrimSpace(csvPaths[i]), feed.WithSkipRows(1), feed.WithSymbol(core.Symbol(sym)))
+		feeds = append(feeds, f)
+
+		var s strategy.Strategy
+		switch *strategyName {
+		case "ma_cross":
+			s = strategy.NewMovingAverageCross(
+				*strategyName, core.Symbol(sym), *fastPeriod, *slowPeriod, int64(*qty),
+			)
+		case "price_cross":
+			thresholdMoney := core.NewMoneyFromFloat(*threshold)
+			s = strategy.NewPriceCrosses(
+				*strategyName, core.Symbol(sym), thresholdMoney, int64(*qty), core.OrderTypeMarket,
+			)
+		default:
+			log.Fatalf("unknown strategy: %s", *strategyName)
+		}
+		strats = append(strats, s)
+	}
+
+	f := feed.NewMergedFeed(feeds...)
 	var strat strategy.Strategy
-	switch *strategyName {
-	case "ma_cross":
-		strat = strategy.NewMovingAverageCross(
-			*strategyName, core.Symbol(*symbol), *fastPeriod, *slowPeriod, int64(*qty),
-		)
-	case "price_cross":
-		thresholdMoney := core.NewMoneyFromFloat(*threshold)
-		strat = strategy.NewPriceCrosses(
-			*strategyName, core.Symbol(*symbol), thresholdMoney, int64(*qty), core.OrderTypeMarket,
-		)
-	default:
-		log.Fatalf("unknown strategy: %s", *strategyName)
+	if len(strats) == 1 {
+		strat = strats[0]
+	} else {
+		strat = strategy.NewMultiStrategy(strats...)
 	}
 
 	bus := event.NewBus()
@@ -89,7 +112,7 @@ func main() {
 	defer cancel()
 
 	fmt.Printf("Starting simulation: %s on %s with $%s\n", *strategyName, *symbol, *cash)
-	fmt.Printf("Data: %s\n\n", *csvPath)
+	fmt.Printf("Data: %s\n", *csvPath)
 
 	result, err := sim.Run(ctx)
 	if err != nil {

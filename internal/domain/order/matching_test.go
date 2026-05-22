@@ -177,6 +177,27 @@ func TestStopBook_StopBuy_TriggersOnPriceRise(t *testing.T) {
 	}
 }
 
+func TestStopBook_StopLimit_ConvertsToLimitOnTrigger(t *testing.T) {
+	sb := &StopBook{}
+	stopOrder := &Order{
+		ID: "stop1", Side: core.OrderSideBuy, Type: core.OrderTypeStopLimit,
+		StopPrice: mustMoney(t, "110.00"), Price: mustMoney(t, "111.00"),
+		Quantity: 100, Status: core.OrderStatusSubmitted,
+	}
+	sb.AddStop(stopOrder)
+
+	activated := sb.CheckTriggers(mustMoney(t, "110.50"))
+	if len(activated) != 1 {
+		t.Fatalf("expected 1 activated order, got %d", len(activated))
+	}
+	if activated[0].Type != core.OrderTypeLimit {
+		t.Fatalf("stop-limit should convert to limit order, got %s", activated[0].Type)
+	}
+	if activated[0].Price.String() != "111.00" {
+		t.Fatalf("expected limit price 111.00, got %s", activated[0].Price)
+	}
+}
+
 func TestStopBook_AlreadyTriggered_NoDuplicate(t *testing.T) {
 	sb := &StopBook{}
 	stopOrder := &Order{

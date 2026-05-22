@@ -60,7 +60,7 @@ type Simulation struct {
 	feed      market.Feed
 	strategy  strategy.Strategy
 	engine    *order.MatchingEngine
-	orderBook *BacktestOrderBook
+	orderBook *OrderBookManager
 	stopBook  *order.StopBook
 	portfolio *portfolio.Portfolio
 	clk       clock.Clock
@@ -76,7 +76,6 @@ type Simulation struct {
 	equity      []EquityPoint
 	lastPrices  map[core.Symbol]core.Money
 	peakEquity  core.Money
-	fillSeq     int64
 }
 
 func NewSimulation(
@@ -91,7 +90,7 @@ func NewSimulation(
 		feed:       feed,
 		strategy:   strategy,
 		engine:     engine,
-		orderBook:  NewBacktestOrderBook(),
+		orderBook:  NewOrderBookManager(),
 		stopBook:   &order.StopBook{},
 		portfolio:  portfolio.NewPortfolio(config.PortfolioID, config.InitialCash, clk.Now()),
 		clk:        clk,
@@ -144,14 +143,32 @@ func (s *Simulation) processTick(ctx context.Context, tick market.Tick) error {
 
 	activated := s.stopBook.CheckTriggers(tick.Price)
 	for _, o := range activated {
-		matches := s.orderBook.FindMatch(o, s.lastPrice(o.Symbol))
+		switch o.Type {
+		case core.OrderTypeMarket:
+			matches := s.orderBook.FindMatch(o, s.lastPrice(o.Symbol))
+			for _, fill := range matches {
+				if err := s.applyFill(o, fill, now); err != nil {
+					return err
+				}
+			}
+		case core.OrderTypeLimit:
+			s.orderBook.AddOrder(o)
+			matches := s.orderBook.FindMatch(o, s.lastPrice(o.Symbol))
+			for _, fill := range matches {
+				if err := s.applyFill(o, fill, now); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	resting := s.orderBook.RestingOrders(tick.Symbol)
+	for _, o := range resting {
+		matches := s.orderBook.FindMatch(o, tick.Price)
 		for _, fill := range matches {
 			if err := s.applyFill(o, fill, now); err != nil {
 				return err
 			}
-		}
-		if o.IsActive() {
-			s.orderBook.AddOrder(o)
 		}
 	}
 
@@ -160,17 +177,17 @@ func (s *Simulation) processTick(ctx context.Context, tick market.Tick) error {
 		return fmt.Errorf("strategy error: %w", err)
 	}
 
-		if sig != nil {
-			prices := map[core.Symbol]core.Money{tick.Symbol: tick.Price}
-			equity := s.portfolio.TotalEquity(prices)
+	if sig != nil {
+		prices := map[core.Symbol]core.Money{tick.Symbol: tick.Price}
+		equity := s.portfolio.TotalEquity(prices)
 
-			skipOrder := false
-			orderPrice := sig.Price
-			if orderPrice.IsZero() {
-				orderPrice = tick.Price
-			}
-			if err := s.config.RiskConstraints.ValidateOrder(s.portfolio, sig.Symbol, sig.Type.ToOrderSide(), orderPrice, sig.Quantity, prices); err != nil {
-				s.log.Log("  [RISK] %s — skipping signal %s %s qty=%d @ %s", err, sig.Type, sig.Symbol, sig.Quantity, orderPrice)
+		skipOrder := false
+		orderPrice := sig.Price
+		if orderPrice.IsZero() {
+			orderPrice = tick.Price
+		}
+		if err := s.config.RiskConstraints.ValidateOrder(s.portfolio, sig.Symbol, sig.Type.ToOrderSide(), orderPrice, sig.Quantity, prices); err != nil {
+			s.log.Log("  [RISK] %s — skipping signal %s %s qty=%d @ %s", err, sig.Type, sig.Symbol, sig.Quantity, orderPrice)
 			skipOrder = true
 		}
 		if !skipOrder {
@@ -202,11 +219,16 @@ func (s *Simulation) processTick(ctx context.Context, tick market.Tick) error {
 
 			if o.Type == core.OrderTypeStop || o.Type == core.OrderTypeStopLimit {
 				s.stopBook.AddStop(o)
+			} else if o.Type == core.OrderTypeLimit {
+				s.orderBook.AddOrder(o)
+				matches := s.orderBook.FindMatch(o, s.lastPrice(o.Symbol))
+				for _, fill := range matches {
+					if err := s.applyFill(o, fill, now); err != nil {
+						return err
+					}
+				}
 			} else {
 				matches := s.orderBook.FindMatch(o, s.lastPrice(o.Symbol))
-				if len(matches) == 0 && o.Type == core.OrderTypeLimit {
-					s.orderBook.AddOrder(o)
-				}
 				for _, fill := range matches {
 					if err := s.applyFill(o, fill, now); err != nil {
 						return err
@@ -220,9 +242,7 @@ func (s *Simulation) processTick(ctx context.Context, tick market.Tick) error {
 		}
 	}
 
-	lastPrice := s.lastPrice(tick.Symbol)
-	prices := map[core.Symbol]core.Money{tick.Symbol: lastPrice}
-	equity := s.portfolio.TotalEquity(prices)
+	equity := s.portfolio.TotalEquity(map[core.Symbol]core.Money{tick.Symbol: tick.Price})
 	if equity.GreaterThan(s.peakEquity) {
 		s.peakEquity = equity
 	}
@@ -332,24 +352,38 @@ func (s *Simulation) result() *SimulationResult {
 	}
 }
 
-type BacktestOrderBook struct {
-	bids []*order.Order
-	asks []*order.Order
+type SymbolOrders struct {
+	Bids []*order.Order
+	Asks []*order.Order
 }
 
-func NewBacktestOrderBook() *BacktestOrderBook {
-	return &BacktestOrderBook{}
+type OrderBookManager struct {
+	books map[core.Symbol]*SymbolOrders
 }
 
-func (b *BacktestOrderBook) AddOrder(o *order.Order) {
+func NewOrderBookManager() *OrderBookManager {
+	return &OrderBookManager{books: make(map[core.Symbol]*SymbolOrders)}
+}
+
+func (m *OrderBookManager) book(sym core.Symbol) *SymbolOrders {
+	b, ok := m.books[sym]
+	if !ok {
+		b = &SymbolOrders{}
+		m.books[sym] = b
+	}
+	return b
+}
+
+func (m *OrderBookManager) AddOrder(o *order.Order) {
+	b := m.book(o.Symbol)
 	if o.Side == core.OrderSideBuy {
-		b.bids = append(b.bids, o)
+		b.Bids = append(b.Bids, o)
 	} else {
-		b.asks = append(b.asks, o)
+		b.Asks = append(b.Asks, o)
 	}
 }
 
-func (b *BacktestOrderBook) FindMatch(o *order.Order, lastPrice core.Money) []order.Fill {
+func (m *OrderBookManager) FindMatch(o *order.Order, lastPrice core.Money) []order.Fill {
 	var fills []order.Fill
 
 	switch o.Type {
@@ -357,14 +391,13 @@ func (b *BacktestOrderBook) FindMatch(o *order.Order, lastPrice core.Money) []or
 		if lastPrice.IsZero() {
 			return nil
 		}
-		fill := order.Fill{
+		fills = append(fills, order.Fill{
 			ID:        order.FillID(newFillID()),
 			OrderID:   o.ID,
 			Price:     lastPrice,
 			Quantity:  o.RemainingQty(),
 			Timestamp: time.Now(),
-		}
-		fills = append(fills, fill)
+		})
 
 	case core.OrderTypeLimit:
 		if lastPrice.IsZero() {
@@ -377,18 +410,57 @@ func (b *BacktestOrderBook) FindMatch(o *order.Order, lastPrice core.Money) []or
 			canFill = true
 		}
 		if canFill {
-			fill := order.Fill{
+			fills = append(fills, order.Fill{
 				ID:        order.FillID(newFillID()),
 				OrderID:   o.ID,
 				Price:     o.Price,
 				Quantity:  o.RemainingQty(),
 				Timestamp: time.Now(),
-			}
-			fills = append(fills, fill)
+			})
 		}
 	}
 
 	return fills
+}
+
+func (m *OrderBookManager) RestingOrders(symbol core.Symbol) []*order.Order {
+	b, ok := m.books[symbol]
+	if !ok {
+		return nil
+	}
+	var result []*order.Order
+	for _, o := range b.Bids {
+		if o.IsActive() && o.RemainingQty() > 0 {
+			result = append(result, o)
+		}
+	}
+	for _, o := range b.Asks {
+		if o.IsActive() && o.RemainingQty() > 0 {
+			result = append(result, o)
+		}
+	}
+	return result
+}
+
+func (m *OrderBookManager) RemoveFilled(o *order.Order) {
+	b, ok := m.books[o.Symbol]
+	if !ok {
+		return
+	}
+	if o.Side == core.OrderSideBuy {
+		b.Bids = removeOrder(b.Bids, o)
+	} else {
+		b.Asks = removeOrder(b.Asks, o)
+	}
+}
+
+func removeOrder(orders []*order.Order, target *order.Order) []*order.Order {
+	for i, o := range orders {
+		if o == target {
+			return append(orders[:i], orders[i+1:]...)
+		}
+	}
+	return orders
 }
 
 var fillCounter int64

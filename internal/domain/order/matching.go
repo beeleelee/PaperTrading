@@ -229,9 +229,13 @@ func (sb *StopBook) CheckTriggers(lastPrice core.Money) []*Order {
 		}
 		if triggered {
 			so.Triggered = true
-			marketOrder := *so.Order
-			marketOrder.Type = core.OrderTypeMarket
-			activated = append(activated, &marketOrder)
+			converted := *so.Order
+			if converted.Type == core.OrderTypeStopLimit {
+				converted.Type = core.OrderTypeLimit
+			} else {
+				converted.Type = core.OrderTypeMarket
+			}
+			activated = append(activated, &converted)
 		}
 	}
 	return activated
