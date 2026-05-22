@@ -32,6 +32,9 @@ hints.md
 
 # generated artifacts
 equity_curve.csv
+node_modules/
+web/node_modules/
+
 
 # Editor/IDE
 # .idea/

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/felix/papertrading/internal/app"
 	"github.com/felix/papertrading/internal/domain/core"
 	"github.com/felix/papertrading/internal/domain/market"
 	"github.com/felix/papertrading/internal/domain/order"
@@ -13,9 +14,8 @@ import (
 	"github.com/felix/papertrading/internal/domain/risk"
 	"github.com/felix/papertrading/internal/domain/strategy"
 	"github.com/felix/papertrading/internal/event"
-	"github.com/felix/papertrading/internal/infra/feed"
 	"github.com/felix/papertrading/internal/infra/clock"
-	"github.com/felix/papertrading/internal/app"
+	"github.com/felix/papertrading/internal/infra/feed"
 	"github.com/google/uuid"
 )
 
@@ -28,6 +28,16 @@ const (
 	JobStatusFailed    JobStatus = "failed"
 )
 
+type WSMessage struct {
+	Type      string `json:"type"`
+	Symbol    string `json:"symbol,omitempty"`
+	Price     string `json:"price,omitempty"`
+	Volume    int64  `json:"volume,omitempty"`
+	Equity    string `json:"equity,omitempty"`
+	Timestamp string `json:"timestamp,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
 type BacktestJob struct {
 	ID          string
 	Config      CreateBacktestRequest
@@ -36,7 +46,7 @@ type BacktestJob struct {
 	Error       string
 	CreatedAt   time.Time
 	CompletedAt time.Time
-	sim         *app.Simulation
+	TickChan    chan WSMessage
 	cancel      context.CancelFunc
 }
 
@@ -60,6 +70,7 @@ func (jm *JobManager) Create(req CreateBacktestRequest) *BacktestJob {
 		Config:    req,
 		Status:    JobStatusPending,
 		CreatedAt: time.Now(),
+		TickChan:  make(chan WSMessage, 256),
 	}
 	jm.jobs[job.ID] = job
 	return job
@@ -94,8 +105,9 @@ func (jm *JobManager) Run(job *BacktestJob) {
 
 	go func() {
 		defer cancel()
+		defer close(job.TickChan)
 
-		result, err := jm.execute(ctx, job.Config)
+		result, err := jm.execute(ctx, job, job.TickChan)
 		jm.mu.Lock()
 		defer jm.mu.Unlock()
 
@@ -103,9 +115,11 @@ func (jm *JobManager) Run(job *BacktestJob) {
 		if err != nil {
 			job.Status = JobStatusFailed
 			job.Error = err.Error()
+			job.TickChan <- WSMessage{Type: "error", Error: err.Error()}
 		} else {
 			job.Status = JobStatusCompleted
 			job.Result = result
+			job.TickChan <- WSMessage{Type: "completed"}
 		}
 	}()
 }
@@ -126,28 +140,28 @@ func (jm *JobManager) Cancel(id string) bool {
 	return true
 }
 
-func (jm *JobManager) execute(ctx context.Context, cfg CreateBacktestRequest) (*app.SimulationResult, error) {
-	initialCash, err := core.NewMoney(cfg.InitialCash)
+func (jm *JobManager) execute(ctx context.Context, job *BacktestJob, tickChan chan<- WSMessage) (*app.SimulationResult, error) {
+	initialCash, err := core.NewMoney(job.Config.InitialCash)
 	if err != nil {
 		return nil, fmt.Errorf("invalid cash: %w", err)
 	}
 
-	if len(cfg.Symbols) != len(cfg.CSVPaths) {
+	if len(job.Config.Symbols) != len(job.Config.CSVPaths) {
 		return nil, fmt.Errorf("symbols and csv_paths must have same length")
 	}
 
-	symbols := make([]core.Symbol, len(cfg.Symbols))
-	for i, sym := range cfg.Symbols {
+	symbols := make([]core.Symbol, len(job.Config.Symbols))
+	for i, sym := range job.Config.Symbols {
 		symbols[i] = core.Symbol(sym)
 	}
 
 	var feeds []market.Feed
 	var strats []strategy.Strategy
 	for i, sym := range symbols {
-		f := feed.NewCSVFeed(cfg.CSVPaths[i], feed.WithSkipRows(1), feed.WithSymbol(sym))
+		f := feed.NewCSVFeed(job.Config.CSVPaths[i], feed.WithSkipRows(1), feed.WithSymbol(sym))
 		feeds = append(feeds, f)
 
-		s, err := createStrategy(cfg.Strategy.Name, cfg.Strategy.Params, sym)
+		s, err := createStrategy(job.Config.Strategy.Name, job.Config.Strategy.Params, sym)
 		if err != nil {
 			return nil, fmt.Errorf("create strategy for %s: %w", sym, err)
 		}
@@ -168,14 +182,30 @@ func (jm *JobManager) execute(ctx context.Context, cfg CreateBacktestRequest) (*
 		PortfolioID: portfolio.PortfolioID("api-" + uuid.NewString()[:8]),
 		FillConfig:  order.DefaultFillConfig(),
 		RiskConstraints: risk.Constraints{
-			MaxPositionPct: cfg.Risk.MaxPositionPct,
-			MaxDrawdownPct: cfg.Risk.MaxDrawdownPct,
-			MaxPositions:   cfg.Risk.MaxPositions,
+			MaxPositionPct: job.Config.Risk.MaxPositionPct,
+			MaxDrawdownPct: job.Config.Risk.MaxDrawdownPct,
+			MaxPositions:   job.Config.Risk.MaxPositions,
 		},
 		LogTrades: false,
 	}
 
 	bus := event.NewBus()
+	bus.Subscribe("market.tick_processed", func(ctx context.Context, e event.Event) error {
+		tp := e.(event.TickProcessed)
+		select {
+		case tickChan <- WSMessage{
+			Type:      "tick",
+			Symbol:    string(tp.Symbol),
+			Price:     tp.Price.String(),
+			Volume:    tp.Volume,
+			Equity:    tp.Equity.String(),
+			Timestamp: tp.At.Format(time.RFC3339),
+		}:
+		default:
+		}
+		return nil
+	})
+
 	sim := app.NewSimulation(mergedFeed, strat, clock.RealClock{}, bus, simConfig)
 	return sim.Run(ctx)
 }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io/fs"
 	"log"
 	"net/http"
 	"time"
@@ -10,14 +11,20 @@ import (
 	"github.com/felix/papertrading/internal/domain/metrics"
 	"github.com/felix/papertrading/internal/domain/order"
 	"github.com/felix/papertrading/internal/domain/portfolio"
+	"github.com/felix/papertrading/internal/web"
 )
 
 type Server struct {
-	jm *JobManager
+	jm      *JobManager
+	spaFS   fs.FS
 }
 
 func NewServer(jm *JobManager) *Server {
-	return &Server{jm: jm}
+	s := &Server{jm: jm}
+	if fsys, err := fs.Sub(web.DistFS, "dist"); err == nil {
+		s.spaFS = fsys
+	}
+	return s
 }
 
 func (s *Server) Handler() http.Handler {
@@ -26,6 +33,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/backtests", s.handleList)
 	mux.HandleFunc("GET /api/v1/backtests/{id}", s.handleGet)
 	mux.HandleFunc("DELETE /api/v1/backtests/{id}", s.handleCancel)
+	mux.HandleFunc("GET /ws/backtests/{id}", s.handleWS)
+
+	if s.spaFS != nil {
+		spaHandler := http.FileServer(http.FS(s.spaFS))
+		mux.Handle("/", spaHandler)
+	} else {
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(ErrorResponse{
+				Error: "SPA not built — run: cd web && npm run build",
+			})
+		})
+	}
+
 	return withLogging(mux)
 }
 

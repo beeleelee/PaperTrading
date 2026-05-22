@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/api/client.ts","./src/api/websocket.ts","./src/components/KlineChart.tsx","./src/components/MetricsCards.tsx","./src/components/Tables.tsx","./src/hooks/useBacktest.ts","./src/hooks/useTickStream.ts","./src/pages/HomePage.tsx","./src/pages/ResultPage.tsx","./src/types/backtest.ts"],"version":"5.8.3"}

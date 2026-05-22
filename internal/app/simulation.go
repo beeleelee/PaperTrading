@@ -248,6 +248,14 @@ func (s *Simulation) processTick(ctx context.Context, tick market.Tick) error {
 	}
 	s.equity = append(s.equity, EquityPoint{Time: tick.Timestamp, Equity: equity})
 
+	s.bus.Publish(ctx, event.TickProcessed{
+		Symbol: tick.Symbol,
+		Price:  tick.Price,
+		Volume: tick.Volume,
+		Equity: equity,
+		At:     tick.Timestamp,
+	})
+
 	if s.portfolioRepo != nil {
 		s.portfolioRepo.Save(context.Background(), s.portfolio)
 	}

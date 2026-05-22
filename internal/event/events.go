@@ -91,3 +91,14 @@ type PositionClosed struct {
 
 func (e PositionClosed) EventName() string   { return "portfolio.position_closed" }
 func (e PositionClosed) Timestamp() time.Time { return e.At }
+
+type TickProcessed struct {
+	Symbol    core.Symbol
+	Price     core.Money
+	Volume    int64
+	Equity    core.Money
+	At        time.Time
+}
+
+func (e TickProcessed) EventName() string   { return "market.tick_processed" }
+func (e TickProcessed) Timestamp() time.Time { return e.At }
