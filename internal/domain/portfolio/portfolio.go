@@ -7,12 +7,28 @@ import (
 
 type PortfolioID string
 
+type ClosedTrade struct {
+	Symbol     core.Symbol
+	EntryPrice core.Money
+	ExitPrice  core.Money
+	Quantity   int64
+	PnL        core.Money
+	OpenedAt   time.Time
+	ClosedAt   time.Time
+}
+
 type Portfolio struct {
-	ID        PortfolioID
-	Cash      core.Money
-	Positions map[core.Symbol]*Position
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           PortfolioID
+	Cash         core.Money
+	Positions    map[core.Symbol]*Position
+	closedTrades []ClosedTrade
+	realizedPnL  core.Money
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+func (p *Portfolio) ClosedTrades() []ClosedTrade {
+	return p.closedTrades
 }
 
 func NewPortfolio(id PortfolioID, initialCash core.Money, now time.Time) *Portfolio {
@@ -36,7 +52,7 @@ func (p *Portfolio) TotalEquity(prices map[core.Symbol]core.Money) core.Money {
 }
 
 func (p *Portfolio) RealizedPnL() core.Money {
-	return core.NewMoneyFromInt(0)
+	return p.realizedPnL
 }
 
 func (p *Portfolio) UnrealizedPnL(prices map[core.Symbol]core.Money) core.Money {
@@ -75,6 +91,7 @@ func (p *Portfolio) OpenPosition(symbol core.Symbol, price core.Money, quantity 
 	if err != nil {
 		return err
 	}
+	pos.OpenedAt = now
 	p.Positions[symbol] = pos
 	p.Cash = p.Cash.Sub(cost)
 	p.UpdatedAt = now
@@ -107,8 +124,22 @@ func (p *Portfolio) ReducePosition(symbol core.Symbol, price core.Money, quantit
 	if quantity > pos.Quantity {
 		return ErrInsufficientPosition
 	}
+
 	revenue := price.Mul(quantity)
+	costBasis := pos.AvgEntryPrice.Mul(quantity)
+	pnl := revenue.Sub(costBasis)
+
 	p.Cash = p.Cash.Add(revenue)
+	p.realizedPnL = p.realizedPnL.Add(pnl)
+	p.closedTrades = append(p.closedTrades, ClosedTrade{
+		Symbol:     symbol,
+		EntryPrice: pos.AvgEntryPrice,
+		ExitPrice:  price,
+		Quantity:   quantity,
+		PnL:        pnl,
+		OpenedAt:   pos.OpenedAt,
+		ClosedAt:   now,
+	})
 
 	if quantity == pos.Quantity {
 		delete(p.Positions, symbol)

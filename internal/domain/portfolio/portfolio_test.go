@@ -164,6 +164,104 @@ func TestPortfolio_UnrealizedPnL(t *testing.T) {
 	}
 }
 
+func TestPortfolio_RealizedPnL_NoTrades(t *testing.T) {
+	now := time.Now()
+	p := NewPortfolio("p1", mustMoney(t, "100000.00"), now)
+	if p.RealizedPnL().String() != "0.00" {
+		t.Fatalf("expected 0 realized PnL, got %s", p.RealizedPnL())
+	}
+	if len(p.ClosedTrades()) != 0 {
+		t.Fatalf("expected 0 closed trades, got %d", len(p.ClosedTrades()))
+	}
+}
+
+func TestPortfolio_RealizedPnL_ClosePosition(t *testing.T) {
+	now := time.Now()
+	p := NewPortfolio("p1", mustMoney(t, "100000.00"), now)
+	p.OpenPosition("AAPL", mustMoney(t, "100.00"), 100, now)
+	p.ClosePosition("AAPL", mustMoney(t, "120.00"), now)
+
+	// PnL = (120 - 100) * 100 = 2000
+	if p.RealizedPnL().String() != "2000.00" {
+		t.Fatalf("expected realized PnL 2000.00, got %s", p.RealizedPnL())
+	}
+	closed := p.ClosedTrades()
+	if len(closed) != 1 {
+		t.Fatalf("expected 1 closed trade, got %d", len(closed))
+	}
+	if closed[0].PnL.String() != "2000.00" {
+		t.Fatalf("expected trade PnL 2000.00, got %s", closed[0].PnL)
+	}
+	if closed[0].Quantity != 100 {
+		t.Fatalf("expected trade qty 100, got %d", closed[0].Quantity)
+	}
+	if closed[0].EntryPrice.String() != "100.00" {
+		t.Fatalf("expected entry price 100.00, got %s", closed[0].EntryPrice)
+	}
+	if closed[0].ExitPrice.String() != "120.00" {
+		t.Fatalf("expected exit price 120.00, got %s", closed[0].ExitPrice)
+	}
+}
+
+func TestPortfolio_RealizedPnL_LosingTrade(t *testing.T) {
+	now := time.Now()
+	p := NewPortfolio("p1", mustMoney(t, "100000.00"), now)
+	p.OpenPosition("AAPL", mustMoney(t, "100.00"), 100, now)
+	p.ClosePosition("AAPL", mustMoney(t, "80.00"), now)
+
+	// PnL = (80 - 100) * 100 = -2000
+	if p.RealizedPnL().String() != "-2000.00" {
+		t.Fatalf("expected realized PnL -2000.00, got %s", p.RealizedPnL())
+	}
+	if p.ClosedTrades()[0].PnL.String() != "-2000.00" {
+		t.Fatalf("expected trade PnL -2000.00, got %s", p.ClosedTrades()[0].PnL)
+	}
+}
+
+func TestPortfolio_RealizedPnL_PartialClose(t *testing.T) {
+	now := time.Now()
+	p := NewPortfolio("p1", mustMoney(t, "100000.00"), now)
+	p.OpenPosition("AAPL", mustMoney(t, "100.00"), 100, now)
+	p.ReducePosition("AAPL", mustMoney(t, "120.00"), 40, now)
+
+	// PnL = (120 - 100) * 40 = 800
+	if p.RealizedPnL().String() != "800.00" {
+		t.Fatalf("expected realized PnL 800.00, got %s", p.RealizedPnL())
+	}
+	if len(p.ClosedTrades()) != 1 {
+		t.Fatalf("expected 1 closed trade, got %d", len(p.ClosedTrades()))
+	}
+	if p.ClosedTrades()[0].Quantity != 40 {
+		t.Fatalf("expected trade qty 40, got %d", p.ClosedTrades()[0].Quantity)
+	}
+	// Remaining position should still be there
+	if !p.HasPosition("AAPL") {
+		t.Fatal("AAPL position should still exist")
+	}
+	if p.Positions["AAPL"].Quantity != 60 {
+		t.Fatalf("expected 60 shares remaining, got %d", p.Positions["AAPL"].Quantity)
+	}
+}
+
+func TestPortfolio_RealizedPnL_MultipleTrades(t *testing.T) {
+	now := time.Now()
+	p := NewPortfolio("p1", mustMoney(t, "100000.00"), now)
+
+	p.OpenPosition("AAPL", mustMoney(t, "100.00"), 100, now)
+	p.ClosePosition("AAPL", mustMoney(t, "110.00"), now)
+
+	p.OpenPosition("GOOG", mustMoney(t, "200.00"), 50, now)
+	p.ClosePosition("GOOG", mustMoney(t, "180.00"), now)
+
+	// Total PnL = (110-100)*100 + (180-200)*50 = 1000 + (-1000) = 0
+	if p.RealizedPnL().String() != "0.00" {
+		t.Fatalf("expected realized PnL 0.00, got %s", p.RealizedPnL())
+	}
+	if len(p.ClosedTrades()) != 2 {
+		t.Fatalf("expected 2 closed trades, got %d", len(p.ClosedTrades()))
+	}
+}
+
 func TestPortfolio_PositionCount(t *testing.T) {
 	now := time.Now()
 	p := NewPortfolio("p1", mustMoney(t, "100000.00"), now)

@@ -22,6 +22,24 @@ type Signal struct {
 	Timestamp time.Time
 }
 
+func (st SignalType) String() string {
+	switch st {
+	case SignalBuy:
+		return "buy"
+	case SignalSell:
+		return "sell"
+	default:
+		return "unknown"
+	}
+}
+
+func (st SignalType) ToOrderSide() core.OrderSide {
+	if st == SignalSell {
+		return core.OrderSideSell
+	}
+	return core.OrderSideBuy
+}
+
 func (s Signal) ToOrder(portfolioID string, now time.Time) (*order.Order, error) {
 	side := core.OrderSideBuy
 	if s.Type == SignalSell {

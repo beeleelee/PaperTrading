@@ -1,6 +1,7 @@
 package portfolio
 
 import (
+	"time"
 	"github.com/felix/papertrading/internal/domain/core"
 )
 
@@ -8,6 +9,7 @@ type Position struct {
 	Symbol        core.Symbol
 	Quantity      int64
 	AvgEntryPrice core.Money
+	OpenedAt      time.Time
 }
 
 func NewPosition(symbol core.Symbol, price core.Money, quantity int64) (*Position, error) {

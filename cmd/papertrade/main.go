@@ -10,6 +10,7 @@ import (
 	"github.com/felix/papertrading/internal/domain/core"
 	"github.com/felix/papertrading/internal/domain/order"
 	"github.com/felix/papertrading/internal/domain/portfolio"
+	"github.com/felix/papertrading/internal/domain/risk"
 	"github.com/felix/papertrading/internal/domain/strategy"
 	"github.com/felix/papertrading/internal/event"
 	"github.com/felix/papertrading/internal/infra/clock"
@@ -25,6 +26,9 @@ func main() {
 	slowPeriod := flag.Int("slow", 30, "slow MA period")
 	qty := flag.Int("qty", 100, "trade quantity")
 	threshold := flag.Float64("threshold", 0.0, "price threshold for price_cross strategy")
+	maxPosPct := flag.Float64("max-pos-pct", 0, "max position size as %% of portfolio (0 = unlimited)")
+	maxDrawdown := flag.Float64("max-drawdown", 0, "max drawdown %% before stopping (0 = unlimited)")
+	maxPositions := flag.Int("max-positions", 0, "max open positions (0 = unlimited)")
 	flag.Parse()
 
 	money, err := core.NewMoney(*cash)
@@ -54,7 +58,12 @@ func main() {
 		InitialCash: money,
 		PortfolioID: portfolio.PortfolioID("default"),
 		FillConfig:  order.DefaultFillConfig(),
-		LogTrades:   true,
+		RiskConstraints: risk.Constraints{
+			MaxPositionPct: *maxPosPct,
+			MaxDrawdownPct: *maxDrawdown,
+			MaxPositions:   *maxPositions,
+		},
+		LogTrades: true,
 	}
 
 	sim := app.NewSimulation(f, strat, clock.RealClock{}, bus, cfg)
@@ -84,6 +93,26 @@ func main() {
 		fmt.Printf("  %s: %d shares @ avg $%s (last: $%s, PnL: $%s)\n",
 			sym, pos.Quantity, pos.AvgEntryPrice, lastPrice, pnl)
 	}
+
+	m := result.Metrics
+	pnlStr := m.TotalPnL.String()
+	if m.TotalPnL.IsNegative() {
+		pnlStr = "-$" + pnlStr[1:]
+	} else {
+		pnlStr = "$" + pnlStr
+	}
+	fmt.Printf("Total PnL:     %s\n", pnlStr)
+	if m.TotalTrades > 0 {
+		fmt.Printf("Trades:        %d (%d win / %d loss)\n", m.TotalTrades, m.WinningTrades, m.LosingTrades)
+		fmt.Printf("Win rate:      %.1f%%\n", m.WinRate)
+		if m.ProfitFactor > 1e9 {
+			fmt.Printf("Profit factor: Inf\n")
+		} else {
+			fmt.Printf("Profit factor: %.2f\n", m.ProfitFactor)
+		}
+	}
+	fmt.Printf("Max drawdown:  %.2f%%\n", m.MaxDrawdown)
+	fmt.Printf("Sharpe ratio:  %.2f\n", m.SharpeRatio)
 	fmt.Printf("Start:         %s\n", result.StartTime.Format("2006-01-02 15:04:05"))
 	fmt.Printf("End:           %s\n", result.EndTime.Format("2006-01-02 15:04:05"))
 

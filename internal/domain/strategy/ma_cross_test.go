@@ -200,6 +200,28 @@ func TestSMA(t *testing.T) {
 	}
 }
 
+func TestSignalType_String(t *testing.T) {
+	if SignalBuy.String() != "buy" {
+		t.Fatalf("expected 'buy', got %s", SignalBuy.String())
+	}
+	if SignalSell.String() != "sell" {
+		t.Fatalf("expected 'sell', got %s", SignalSell.String())
+	}
+	var unknown SignalType
+	if unknown.String() != "unknown" {
+		t.Fatalf("expected 'unknown', got %s", unknown.String())
+	}
+}
+
+func TestSignalType_ToOrderSide(t *testing.T) {
+	if SignalBuy.ToOrderSide() != core.OrderSideBuy {
+		t.Fatal("SignalBuy should map to OrderSideBuy")
+	}
+	if SignalSell.ToOrderSide() != core.OrderSideSell {
+		t.Fatal("SignalSell should map to OrderSideSell")
+	}
+}
+
 func TestSignal_ToOrder(t *testing.T) {
 	now := time.Now()
 	s := Signal{

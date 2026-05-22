@@ -6,8 +6,10 @@ import (
 	"time"
 	"github.com/felix/papertrading/internal/domain/core"
 	"github.com/felix/papertrading/internal/domain/market"
+	"github.com/felix/papertrading/internal/domain/metrics"
 	"github.com/felix/papertrading/internal/domain/order"
 	"github.com/felix/papertrading/internal/domain/portfolio"
+	"github.com/felix/papertrading/internal/domain/risk"
 	"github.com/felix/papertrading/internal/domain/strategy"
 	"github.com/felix/papertrading/internal/event"
 	"github.com/felix/papertrading/internal/infra/clock"
@@ -30,10 +32,11 @@ func (stdLogger) Log(format string, args ...interface{}) {
 }
 
 type SimulationConfig struct {
-	InitialCash   core.Money
-	PortfolioID   portfolio.PortfolioID
-	FillConfig    order.FillConfig
-	LogTrades     bool
+	InitialCash     core.Money
+	PortfolioID     portfolio.PortfolioID
+	FillConfig      order.FillConfig
+	RiskConstraints risk.Constraints
+	LogTrades       bool
 }
 
 type SimulationResult struct {
@@ -41,6 +44,7 @@ type SimulationResult struct {
 	Orders      []*order.Order
 	Fills       []order.Fill
 	EquityCurve []EquityPoint
+	Metrics     metrics.Metrics
 	StartTime   time.Time
 	EndTime     time.Time
 }
@@ -62,11 +66,12 @@ type Simulation struct {
 	log       Logger
 	config    SimulationConfig
 
-	orders     []*order.Order
-	fills      []order.Fill
-	equity     []EquityPoint
-	lastPrices map[core.Symbol]core.Money
-	fillSeq    int64
+	orders      []*order.Order
+	fills       []order.Fill
+	equity      []EquityPoint
+	lastPrices  map[core.Symbol]core.Money
+	peakEquity  core.Money
+	fillSeq     int64
 }
 
 func NewSimulation(
@@ -132,23 +137,44 @@ func (s *Simulation) processTick(ctx context.Context, tick market.Tick) error {
 
 	activated := s.stopBook.CheckTriggers(tick.Price)
 	for _, o := range activated {
-			matches := s.orderBook.FindMatch(o, s.lastPrice(o.Symbol))
-			for _, fill := range matches {
-				if err := s.applyFill(o, fill, now); err != nil {
-					return err
-				}
-			}
-			if o.IsActive() {
-				s.orderBook.AddOrder(o)
+		matches := s.orderBook.FindMatch(o, s.lastPrice(o.Symbol))
+		for _, fill := range matches {
+			if err := s.applyFill(o, fill, now); err != nil {
+				return err
 			}
 		}
+		if o.IsActive() {
+			s.orderBook.AddOrder(o)
+		}
+	}
 
-		sig, err := s.strategy.OnTick(ctx, tick)
-		if err != nil {
-			return fmt.Errorf("strategy error: %w", err)
-		}
+	sig, err := s.strategy.OnTick(ctx, tick)
+	if err != nil {
+		return fmt.Errorf("strategy error: %w", err)
+	}
 
 		if sig != nil {
+			prices := map[core.Symbol]core.Money{tick.Symbol: tick.Price}
+			equity := s.portfolio.TotalEquity(prices)
+
+			skipOrder := false
+			orderPrice := sig.Price
+			if orderPrice.IsZero() {
+				orderPrice = tick.Price
+			}
+			if err := s.config.RiskConstraints.ValidateOrder(s.portfolio, sig.Symbol, sig.Type.ToOrderSide(), orderPrice, sig.Quantity, prices); err != nil {
+				s.log.Log("  [RISK] %s — skipping signal %s %s qty=%d @ %s", err, sig.Type, sig.Symbol, sig.Quantity, orderPrice)
+			skipOrder = true
+		}
+		if !skipOrder {
+			if err := s.config.RiskConstraints.ValidateDrawdown(equity, s.peakEquity); err != nil {
+				s.log.Log("  [RISK] %s — stopping further trading", err)
+				skipOrder = true
+				s.config.RiskConstraints = risk.Constraints{MaxPositions: -1}
+			}
+		}
+
+		if !skipOrder {
 			o, err := sig.ToOrder(string(s.config.PortfolioID), now)
 			if err != nil {
 				return fmt.Errorf("signal to order: %w", err)
@@ -161,7 +187,7 @@ func (s *Simulation) processTick(ctx context.Context, tick market.Tick) error {
 				PortfolioID: o.PortfolioID,
 				Symbol:      o.Symbol,
 				Side:        o.Side,
-				OrderType:  o.Type,
+				OrderType:   o.Type,
 				Price:       o.Price,
 				Quantity:    o.Quantity,
 				At:          now,
@@ -181,14 +207,18 @@ func (s *Simulation) processTick(ctx context.Context, tick market.Tick) error {
 				}
 			}
 
-		if s.config.LogTrades {
-			s.log.Log("  -> %s %s %s qty=%d", o.Side, o.Type, o.Symbol, o.Quantity)
+			if s.config.LogTrades {
+				s.log.Log("  -> %s %s %s qty=%d", o.Side, o.Type, o.Symbol, o.Quantity)
+			}
 		}
 	}
 
 	lastPrice := s.lastPrice(tick.Symbol)
 	prices := map[core.Symbol]core.Money{tick.Symbol: lastPrice}
 	equity := s.portfolio.TotalEquity(prices)
+	if equity.GreaterThan(s.peakEquity) {
+		s.peakEquity = equity
+	}
 	s.equity = append(s.equity, EquityPoint{Time: tick.Timestamp, Equity: equity})
 
 	return nil
@@ -264,11 +294,21 @@ func (s *Simulation) result() *SimulationResult {
 	for sym := range s.portfolio.Positions {
 		prices[sym] = s.lastPrice(sym)
 	}
+
+	equityValues := make([]core.Money, len(s.equity))
+	for i, ep := range s.equity {
+		equityValues[i] = ep.Equity
+	}
+
+	calc := metrics.NewCalculator()
+	m := calc.Calculate(s.config.InitialCash, s.portfolio, equityValues, prices)
+
 	return &SimulationResult{
 		Portfolio:   s.portfolio,
 		Orders:      s.orders,
 		Fills:       s.fills,
 		EquityCurve: s.equity,
+		Metrics:     m,
 		StartTime:   s.equity[0].Time,
 		EndTime:     s.equity[len(s.equity)-1].Time,
 	}
