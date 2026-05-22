@@ -36,6 +36,8 @@ type SimulationConfig struct {
 	PortfolioID     portfolio.PortfolioID
 	FillConfig      order.FillConfig
 	RiskConstraints risk.Constraints
+	OrderRepo       order.Repository
+	PortfolioRepo   portfolio.Repository
 	LogTrades       bool
 }
 
@@ -66,6 +68,9 @@ type Simulation struct {
 	log       Logger
 	config    SimulationConfig
 
+	orderRepo     order.Repository
+	portfolioRepo portfolio.Repository
+
 	orders      []*order.Order
 	fills       []order.Fill
 	equity      []EquityPoint
@@ -93,6 +98,8 @@ func NewSimulation(
 		bus:        bus,
 		log:        stdLogger{},
 		config:     config,
+		orderRepo:     config.OrderRepo,
+		portfolioRepo: config.PortfolioRepo,
 		orders:     make([]*order.Order, 0),
 		fills:      make([]order.Fill, 0),
 		equity:     make([]EquityPoint, 0),
@@ -221,6 +228,10 @@ func (s *Simulation) processTick(ctx context.Context, tick market.Tick) error {
 	}
 	s.equity = append(s.equity, EquityPoint{Time: tick.Timestamp, Equity: equity})
 
+	if s.portfolioRepo != nil {
+		s.portfolioRepo.Save(context.Background(), s.portfolio)
+	}
+
 	return nil
 }
 
@@ -264,6 +275,13 @@ func (s *Simulation) applyFill(o *order.Order, fill order.Fill, now time.Time) e
 		Commission:  fill.Commission,
 		At:          now,
 	})
+
+	if s.orderRepo != nil {
+		s.orderRepo.Save(context.Background(), o)
+	}
+	if s.portfolioRepo != nil {
+		s.portfolioRepo.Save(context.Background(), s.portfolio)
+	}
 
 	if s.config.LogTrades {
 		s.log.Log("  [FILL] %s %s @ %s qty=%d (cash=%s, equity=%s)",

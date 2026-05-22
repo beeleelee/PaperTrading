@@ -166,3 +166,11 @@ func (p *Portfolio) HasPosition(symbol core.Symbol) bool {
 func (p *Portfolio) PositionCount() int {
 	return len(p.Positions)
 }
+
+func (p *Portfolio) SetRealizedPnL(pnl core.Money) {
+	p.realizedPnL = pnl
+}
+
+func (p *Portfolio) SetClosedTrades(trades []ClosedTrade) {
+	p.closedTrades = trades
+}

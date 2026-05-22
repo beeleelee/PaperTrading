@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+
 	"github.com/felix/papertrading/internal/app"
 	"github.com/felix/papertrading/internal/domain/core"
 	"github.com/felix/papertrading/internal/domain/order"
@@ -15,6 +16,7 @@ import (
 	"github.com/felix/papertrading/internal/event"
 	"github.com/felix/papertrading/internal/infra/clock"
 	"github.com/felix/papertrading/internal/infra/feed"
+	"github.com/felix/papertrading/internal/infra/storage/sqlite"
 )
 
 func main() {
@@ -29,6 +31,7 @@ func main() {
 	maxPosPct := flag.Float64("max-pos-pct", 0, "max position size as %% of portfolio (0 = unlimited)")
 	maxDrawdown := flag.Float64("max-drawdown", 0, "max drawdown %% before stopping (0 = unlimited)")
 	maxPositions := flag.Int("max-positions", 0, "max open positions (0 = unlimited)")
+	db := flag.String("db", "memory", "storage backend: 'memory' or sqlite file path")
 	flag.Parse()
 
 	money, err := core.NewMoney(*cash)
@@ -64,6 +67,19 @@ func main() {
 			MaxPositions:   *maxPositions,
 		},
 		LogTrades: true,
+	}
+
+	if *db != "memory" {
+		d, err := sqlite.Open(*db)
+		if err != nil {
+			log.Fatalf("open sqlite: %v", err)
+		}
+		defer d.Close()
+		cfg.OrderRepo = sqlite.NewOrderRepository(d)
+		cfg.PortfolioRepo = sqlite.NewPortfolioRepository(d)
+		fmt.Printf("Storage:       SQLite (%s)\n", *db)
+	} else {
+		fmt.Printf("Storage:       memory\n")
 	}
 
 	sim := app.NewSimulation(f, strat, clock.RealClock{}, bus, cfg)
