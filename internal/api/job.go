@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -106,6 +107,11 @@ func (jm *JobManager) Run(job *BacktestJob) {
 	go func() {
 		defer cancel()
 		defer close(job.TickChan)
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("backtest %s panicked: %v", job.ID, r)
+			}
+		}()
 
 		result, err := jm.execute(ctx, job, job.TickChan)
 		jm.mu.Lock()
