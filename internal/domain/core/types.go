@@ -1,5 +1,7 @@
 package core
 
+import "encoding/json"
+
 type OrderType int
 
 const (
@@ -29,6 +31,24 @@ func (t OrderType) String() string {
 	}
 }
 
+func (t OrderType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(t.String())
+}
+
+func (t *OrderType) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	for _, v := range []OrderType{OrderTypeMarket, OrderTypeLimit, OrderTypeStop, OrderTypeStopLimit} {
+		if v.String() == s {
+			*t = v
+			return nil
+		}
+	}
+	return nil
+}
+
 type OrderSide int
 
 const (
@@ -50,6 +70,24 @@ func (s OrderSide) String() string {
 	default:
 		return "unknown"
 	}
+}
+
+func (s OrderSide) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.String())
+}
+
+func (s *OrderSide) UnmarshalJSON(data []byte) error {
+	var v string
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	switch v {
+	case "buy":
+		*s = OrderSideBuy
+	case "sell":
+		*s = OrderSideSell
+	}
+	return nil
 }
 
 func (s OrderSide) Inverse() OrderSide {
@@ -117,4 +155,22 @@ func (s OrderStatus) String() string {
 	default:
 		return "unknown"
 	}
+}
+
+func (s OrderStatus) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.String())
+}
+
+func (s *OrderStatus) UnmarshalJSON(data []byte) error {
+	var v string
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	for _, st := range []OrderStatus{OrderStatusCreated, OrderStatusSubmitted, OrderStatusPartiallyFilled, OrderStatusFilled, OrderStatusCancelled, OrderStatusRejected} {
+		if st.String() == v {
+			*s = st
+			return nil
+		}
+	}
+	return nil
 }

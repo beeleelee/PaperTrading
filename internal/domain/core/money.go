@@ -1,6 +1,9 @@
 package core
 
-import "github.com/shopspring/decimal"
+import (
+	"encoding/json"
+	"github.com/shopspring/decimal"
+)
 
 type Money struct {
 	decimal.Decimal
@@ -64,4 +67,35 @@ func (m Money) IsNegative() bool {
 
 func (m Money) String() string {
 	return m.Decimal.StringFixed(2)
+}
+
+func (m Money) MarshalJSON() ([]byte, error) {
+	s := m.String()
+	return []byte(`"` + s + `"`), nil
+}
+
+func (m *Money) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	d, err := decimal.NewFromString(s)
+	if err != nil {
+		return err
+	}
+	m.Decimal = d
+	return nil
+}
+
+func (m Money) MarshalText() ([]byte, error) {
+	return []byte(m.String()), nil
+}
+
+func (m *Money) UnmarshalText(text []byte) error {
+	d, err := decimal.NewFromString(string(text))
+	if err != nil {
+		return err
+	}
+	m.Decimal = d
+	return nil
 }
