@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createBacktest, listBacktests } from '../api/client'
-import type { CreateBacktestRequest } from '../types/backtest'
+import type { CreateBacktestRequest, NoiseConfig } from '../types/backtest'
 
 export function HomePage() {
   const navigate = useNavigate()
@@ -9,6 +9,10 @@ export function HomePage() {
   const [symbol, setSymbol] = useState('AAPL')
   const [csv, setCsv] = useState('test/data/aapl_5min.csv')
   const [cash, setCash] = useState('100000.00')
+  const [noiseEnabled, setNoiseEnabled] = useState(true)
+  const [noiseCount, setNoiseCount] = useState('5')
+  const [noiseSpread, setNoiseSpread] = useState('50')
+  const [noiseMktRate, setNoiseMktRate] = useState('0.3')
   const [loading, setLoading] = useState(false)
 
   const refresh = () => {
@@ -23,6 +27,15 @@ export function HomePage() {
     e.preventDefault()
     setLoading(true)
     try {
+      const noise: NoiseConfig = {
+        enabled: noiseEnabled,
+        count: parseInt(noiseCount) || 5,
+        max_spread_bp: parseFloat(noiseSpread) || 50,
+        min_qty: 10,
+        max_qty: 100,
+        order_rate: 1.0,
+        market_order_rate: parseFloat(noiseMktRate) || 0.3,
+      }
       const req: CreateBacktestRequest = {
         symbols: symbol.split(',').map((s) => s.trim()),
         csv_paths: csv.split(',').map((s) => s.trim()),
@@ -36,6 +49,7 @@ export function HomePage() {
           max_drawdown_pct: 0,
           max_positions: 0,
         },
+        noise,
       }
       const job = await createBacktest(req)
       refresh()
@@ -74,6 +88,43 @@ export function HomePage() {
             />
           </label>
         </div>
+        <details className="noise-config">
+          <summary>Noise Traders</summary>
+          <div className="form-row">
+            <label>
+              <input
+                type="checkbox"
+                checked={noiseEnabled}
+                onChange={(e) => setNoiseEnabled(e.target.checked)}
+              />
+              Enabled
+            </label>
+            <label>
+              Count
+              <input
+                type="number" min="0" max="50"
+                value={noiseCount}
+                onChange={(e) => setNoiseCount(e.target.value)}
+              />
+            </label>
+            <label>
+              Spread (BP)
+              <input
+                type="number" min="1" max="500"
+                value={noiseSpread}
+                onChange={(e) => setNoiseSpread(e.target.value)}
+              />
+            </label>
+            <label>
+              Mkt rate
+              <input
+                type="number" min="0" max="1" step="0.1"
+                value={noiseMktRate}
+                onChange={(e) => setNoiseMktRate(e.target.value)}
+              />
+            </label>
+          </div>
+        </details>
         <button type="submit" disabled={loading}>
           {loading ? 'Running…' : 'Run Backtest'}
         </button>

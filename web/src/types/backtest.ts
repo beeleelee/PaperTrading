@@ -1,9 +1,20 @@
+export interface NoiseConfig {
+  enabled: boolean
+  count: number
+  max_spread_bp: number
+  min_qty: number
+  max_qty: number
+  order_rate: number
+  market_order_rate: number
+}
+
 export interface CreateBacktestRequest {
   symbols: string[]
   csv_paths: string[]
   initial_cash: string
   strategy: StrategyConfig
   risk: RiskConfig
+  noise?: NoiseConfig
 }
 
 export interface StrategyConfig {
@@ -108,12 +119,21 @@ export interface MetricsDTO {
   losing_trades: number
 }
 
+export interface DepthLevel {
+  price: string
+  quantity: number
+  count: number
+}
+
 export interface WSMessage {
   type: 'tick' | 'completed' | 'error'
   symbol?: string
   price?: string
   volume?: number
   equity?: string
+  mark_price?: string
+  bids?: DepthLevel[]
+  asks?: DepthLevel[]
   timestamp?: string
   error?: string
 }

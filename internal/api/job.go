@@ -30,13 +30,16 @@ const (
 )
 
 type WSMessage struct {
-	Type      string `json:"type"`
-	Symbol    string `json:"symbol,omitempty"`
-	Price     string `json:"price,omitempty"`
-	Volume    int64  `json:"volume,omitempty"`
-	Equity    string `json:"equity,omitempty"`
-	Timestamp string `json:"timestamp,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Type      string     `json:"type"`
+	Symbol    string     `json:"symbol,omitempty"`
+	Price     string     `json:"price,omitempty"`
+	Volume    int64      `json:"volume,omitempty"`
+	Equity    string     `json:"equity,omitempty"`
+	MarkPrice string     `json:"mark_price,omitempty"`
+	Bids      []DepthDTO `json:"bids,omitempty"`
+	Asks      []DepthDTO `json:"asks,omitempty"`
+	Timestamp string     `json:"timestamp,omitempty"`
+	Error     string     `json:"error,omitempty"`
 }
 
 type BacktestJob struct {
@@ -183,6 +186,7 @@ func (jm *JobManager) execute(ctx context.Context, job *BacktestJob, tickChan ch
 		strat = strategy.NewMultiStrategy(strats...)
 	}
 
+	nc := job.Config.Noise
 	simConfig := app.SimulationConfig{
 		InitialCash: initialCash,
 		PortfolioID: portfolio.PortfolioID("api-" + uuid.NewString()[:8]),
@@ -192,12 +196,32 @@ func (jm *JobManager) execute(ctx context.Context, job *BacktestJob, tickChan ch
 			MaxDrawdownPct: job.Config.Risk.MaxDrawdownPct,
 			MaxPositions:   job.Config.Risk.MaxPositions,
 		},
+		NoiseConfig: market.NoiseConfig{
+			Enabled:         nc.Enabled,
+			Count:           nc.Count,
+			MaxSpreadBP:     nc.MaxSpreadBP,
+			MinQty:          nc.MinQty,
+			MaxQty:          nc.MaxQty,
+			OrderRate:       nc.OrderRate,
+			MarketOrderRate: nc.MarketOrderRate,
+		},
 		LogTrades: false,
 	}
 
 	bus := event.NewBus()
+	sim := app.NewSimulation(mergedFeed, strat, clock.RealClock{}, bus, simConfig)
+
 	bus.Subscribe("market.tick_processed", func(ctx context.Context, e event.Event) error {
 		tp := e.(event.TickProcessed)
+		depth := sim.Depth(tp.Symbol)
+		bids := make([]DepthDTO, len(depth.Bids))
+		for i, b := range depth.Bids {
+			bids[i] = DepthDTO{Price: b.Price.String(), Quantity: b.Quantity, Count: b.Count}
+		}
+		asks := make([]DepthDTO, len(depth.Asks))
+		for i, a := range depth.Asks {
+			asks[i] = DepthDTO{Price: a.Price.String(), Quantity: a.Quantity, Count: a.Count}
+		}
 		select {
 		case tickChan <- WSMessage{
 			Type:      "tick",
@@ -205,6 +229,9 @@ func (jm *JobManager) execute(ctx context.Context, job *BacktestJob, tickChan ch
 			Price:     tp.Price.String(),
 			Volume:    tp.Volume,
 			Equity:    tp.Equity.String(),
+			MarkPrice: tp.Price.String(),
+			Bids:      bids,
+			Asks:      asks,
 			Timestamp: tp.At.Format(time.RFC3339),
 		}:
 		default:
@@ -212,6 +239,5 @@ func (jm *JobManager) execute(ctx context.Context, job *BacktestJob, tickChan ch
 		return nil
 	})
 
-	sim := app.NewSimulation(mergedFeed, strat, clock.RealClock{}, bus, simConfig)
 	return sim.Run(ctx)
 }

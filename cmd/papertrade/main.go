@@ -33,6 +33,10 @@ func main() {
 	maxPosPct := flag.Float64("max-pos-pct", 0, "max position size as %% of portfolio (0 = unlimited)")
 	maxDrawdown := flag.Float64("max-drawdown", 0, "max drawdown %% before stopping (0 = unlimited)")
 	maxPositions := flag.Int("max-positions", 0, "max open positions (0 = unlimited)")
+	noiseEnabled := flag.Bool("noise", true, "enable noise traders")
+	noiseCount := flag.Int("noise-count", 5, "number of noise traders")
+	noiseSpread := flag.Float64("noise-spread", 50, "noise trader max spread in basis points")
+	noiseMarketRate := flag.Float64("noise-mkt-rate", 0.3, "noise trader market order rate per tick")
 	db := flag.String("db", "memory", "storage backend: 'memory' or sqlite file path")
 	flag.Parse()
 
@@ -88,6 +92,15 @@ func main() {
 			MaxPositionPct: *maxPosPct,
 			MaxDrawdownPct: *maxDrawdown,
 			MaxPositions:   *maxPositions,
+		},
+		NoiseConfig: market.NoiseConfig{
+			Enabled:         *noiseEnabled,
+			Count:           *noiseCount,
+			MaxSpreadBP:     *noiseSpread,
+			MinQty:          10,
+			MaxQty:          100,
+			OrderRate:       1.0,
+			MarketOrderRate: *noiseMarketRate,
 		},
 		LogTrades: true,
 	}

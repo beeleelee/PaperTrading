@@ -6,11 +6,22 @@ type CreateBacktestRequest struct {
 	InitialCash string         `json:"initial_cash"`
 	Strategy    StrategyConfig `json:"strategy"`
 	Risk        RiskConfig     `json:"risk"`
+	Noise       NoiseConfig    `json:"noise"`
 }
 
 type StrategyConfig struct {
 	Name   string         `json:"name"`
 	Params map[string]any `json:"params"`
+}
+
+type NoiseConfig struct {
+	Enabled         bool    `json:"enabled"`
+	Count           int     `json:"count"`
+	MaxSpreadBP     float64 `json:"max_spread_bp"`
+	MinQty          int64   `json:"min_qty"`
+	MaxQty          int64   `json:"max_qty"`
+	OrderRate       float64 `json:"order_rate"`
+	MarketOrderRate float64 `json:"market_order_rate"`
 }
 
 type RiskConfig struct {
@@ -104,6 +115,12 @@ type MetricsDTO struct {
 	TotalTrades   int     `json:"total_trades"`
 	WinningTrades int     `json:"winning_trades"`
 	LosingTrades  int     `json:"losing_trades"`
+}
+
+type DepthDTO struct {
+	Price    string `json:"price"`
+	Quantity int64  `json:"quantity"`
+	Count    int    `json:"count"`
 }
 
 type ErrorResponse struct {

@@ -194,3 +194,67 @@ th {
   padding: 2rem;
   color: #78909c;
 }
+
+.noise-config {
+  margin-bottom: 1rem;
+  color: #78909c;
+}
+.noise-config summary {
+  cursor: pointer;
+  margin-bottom: 0.5rem;
+}
+.noise-config .form-row {
+  margin-bottom: 0;
+}
+.noise-config input[type="checkbox"] {
+  margin-top: 0;
+  margin-right: 0.5rem;
+}
+
+.chart-area {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.chart-area .kline-chart {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.orderbook {
+  width: 240px;
+  flex-shrink: 0;
+  background: #1a1a2e;
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 0.8rem;
+}
+.orderbook-main {
+  max-height: 240px;
+  overflow-y: auto;
+}
+.orderbook-table {
+  width: 100%;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.orderbook-table th {
+  text-align: right;
+  padding: 0.25rem 0.5rem;
+}
+.orderbook-table td {
+  padding: 0.15rem 0.5rem;
+  text-align: right;
+}
+.orderbook-table tr.bid .price { color: #26a69a; }
+.orderbook-table tr.ask .price { color: #ef5350; }
+.orderbook-table .qty { color: #78909c; }
+.orderbook-mark {
+  text-align: center;
+  padding: 0.4rem;
+  font-weight: 700;
+  font-size: 1rem;
+  border-top: 1px solid #2a2a3e;
+  border-bottom: 1px solid #2a2a3e;
+  background: #0f0f23;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}

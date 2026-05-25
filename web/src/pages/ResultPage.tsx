@@ -5,8 +5,9 @@ import { useBacktest } from '../hooks/useBacktest'
 import { useTickStream } from '../hooks/useTickStream'
 import { MetricsCards } from '../components/MetricsCards'
 import { KlineChart } from '../components/KlineChart'
+import { OrderBook } from '../components/OrderBook'
 import { OrdersTable, FillsTable, TradesTable } from '../components/Tables'
-import type { WSMessage } from '../types/backtest'
+import type { WSMessage, DepthLevel } from '../types/backtest'
 import type { EquityPointDTO } from '../types/backtest'
 
 export function ResultPage() {
@@ -15,6 +16,7 @@ export function ResultPage() {
   const { data, loading, error, refetch } = useBacktest(id)
 
   const [wsTicks, setWsTicks] = useState<WSMessage[]>([])
+  const [lastDepth, setLastDepth] = useState<{ markPrice: string; bids: DepthLevel[]; asks: DepthLevel[] }>({ markPrice: '', bids: [], asks: [] })
   const [tab, setTab] = useState<'orders' | 'fills' | 'trades'>('orders')
   const [equityCurve, setEquityCurve] = useState<EquityPointDTO[]>([])
 
@@ -24,6 +26,13 @@ export function ResultPage() {
 
   const handleTick = useCallback((msg: WSMessage) => {
     setWsTicks((prev) => [...prev, msg])
+    if (msg.bids || msg.asks) {
+      setLastDepth({
+        markPrice: msg.mark_price ?? msg.price ?? '',
+        bids: msg.bids ?? [],
+        asks: msg.asks ?? [],
+      })
+    }
   }, [])
 
   const handleComplete = useCallback(() => {
@@ -70,7 +79,12 @@ export function ResultPage() {
         <>
           <MetricsCards metrics={data.result.metrics} />
 
-          <KlineChart equityCurve={equityCurve} wsTicks={wsTicks} />
+          <div className="chart-area">
+            <KlineChart equityCurve={equityCurve} wsTicks={wsTicks} />
+            {lastDepth.bids.length > 0 && (
+              <OrderBook markPrice={lastDepth.markPrice} bids={lastDepth.bids} asks={lastDepth.asks} />
+            )}
+          </div>
 
           <div className="tabs">
             <button
